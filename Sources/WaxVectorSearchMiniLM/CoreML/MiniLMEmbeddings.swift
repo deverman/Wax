@@ -134,18 +134,27 @@ package final class MiniLMEmbeddings {
     /// block can last 5–30 s while CoreML recompiles the execution plan.
     ///
     /// Dispatching to `predictionQueue` keeps the cooperative pool free.
-    private func predictionOffPool(
+    private func batchPredictionOffPool(
         inputIds: MLMultiArray,
-        attentionMask: MLMultiArray
-    ) async -> MLMultiArray? {
+        attentionMask: MLMultiArray,
+        batchSize: Int
+    ) async -> [[Float]]? {
         let localModel = model
+        let outputDimension = self.outputDimension
         return await withCheckedContinuation { continuation in
             Self.predictionQueue.async {
-                let output = try? localModel.prediction(
+                let output: all_MiniLM_L6_v2Output? = try? localModel.prediction(
                     input_ids: inputIds,
                     attention_mask: attentionMask
                 )
-                continuation.resume(returning: output?.var_554)
+                let decoded = output.flatMap {
+                    Self.decodeEmbeddings(
+                        $0.var_554,
+                        batchSize: batchSize,
+                        outputDimension: outputDimension
+                    )
+                }
+                continuation.resume(returning: decoded)
             }
         }
     }
