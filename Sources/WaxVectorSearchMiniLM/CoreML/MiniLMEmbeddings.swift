@@ -134,27 +134,18 @@ package final class MiniLMEmbeddings {
     /// block can last 5–30 s while CoreML recompiles the execution plan.
     ///
     /// Dispatching to `predictionQueue` keeps the cooperative pool free.
-    private func batchPredictionOffPool(
+    private func predictionOffPool(
         inputIds: MLMultiArray,
-        attentionMask: MLMultiArray,
-        batchSize: Int
-    ) async -> [[Float]]? {
+        attentionMask: MLMultiArray
+    ) async -> MLMultiArray? {
         let localModel = model
-        let outputDimension = self.outputDimension
         return await withCheckedContinuation { continuation in
             Self.predictionQueue.async {
-                let output: all_MiniLM_L6_v2Output? = try? localModel.prediction(
+                let output = try? localModel.prediction(
                     input_ids: inputIds,
                     attention_mask: attentionMask
                 )
-                let decoded = output.flatMap {
-                    Self.decodeEmbeddings(
-                        $0.var_554,
-                        batchSize: batchSize,
-                        outputDimension: outputDimension
-                    )
-                }
-                continuation.resume(returning: decoded)
+                continuation.resume(returning: output?.var_554)
             }
         }
     }
@@ -365,9 +356,9 @@ private extension MiniLMEmbeddings {
             let batch = shape[0]
             let dim = shape[1]
             guard batch == batchSize else { return nil }
-            
+
             let isContiguous = strides[1] == 1 && strides[0] == dim
-            
+
             if isContiguous && dataType == .float32 {
                 let floatPtr = embeddings.dataPointer.bindMemory(to: Float.self, capacity: elementCount)
                 return (0..<batch).map { row in
@@ -375,7 +366,7 @@ private extension MiniLMEmbeddings {
                     return Array(UnsafeBufferPointer(start: floatPtr.advanced(by: start), count: dim))
                 }
             }
-            
+
             if isContiguous && dataType == .float16 {
                 let float16BitsPtr = embeddings.dataPointer.bindMemory(to: UInt16.self, capacity: elementCount)
                 return (0..<batch).map { row in
@@ -431,7 +422,7 @@ private extension MiniLMEmbeddings {
             let batch = shape[0]
             let dim = shape[2]
             guard batch == batchSize else { return nil }
-            
+
             let isContiguous = strides[2] == 1 && strides[0] == dim
             if isContiguous && dataType == .float32, let floatPtr {
                 return (0..<batch).map { row in
@@ -439,7 +430,7 @@ private extension MiniLMEmbeddings {
                     return Array(UnsafeBufferPointer(start: floatPtr.advanced(by: start), count: dim))
                 }
             }
-            
+
             return (0..<batch).map { row in
                 var vector = [Float](repeating: 0, count: dim)
                 for col in 0..<dim {
@@ -468,14 +459,14 @@ private extension MiniLMEmbeddings {
             let rowStride = embeddings.count / batchSize
             let dim = min(outputDimension, rowStride)
             guard dim > 0 else { return nil }
-            
+
             if dataType == .float32, let floatPtr {
                 return (0..<batchSize).map { row in
                     let start = row * rowStride
                     return Array(UnsafeBufferPointer(start: floatPtr.advanced(by: start), count: dim))
                 }
             }
-            
+
             return (0..<batchSize).map { row in
                 let start = row * rowStride
                 return (0..<dim).map { readValue(at: start + $0) }
